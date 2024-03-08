@@ -93,8 +93,8 @@ def find_variants(
     """
     rc_adapters = Adapters(revcomp(adapters.left), revcomp(adapters.right))
     peptides = defaultdict(int)
-    max_left_align_score = align_score_threshold * len(adapters.left)
-    max_right_align_score = align_score_threshold * len(adapters.right)
+    max_left_align_score = align_score_threshold * len(adapters.left) * match_score
+    max_right_align_score = align_score_threshold * len(adapters.right) * match_score
 
     for name, seq, qual in pyfastx.Fastq(fq_1, build_index=False):
         variable_region = get_variable_region(seq, adapters, max_left_align_score, max_right_align_score, match_score, mismatch_score, gap_open_penalty, gap_extend_penalty) 

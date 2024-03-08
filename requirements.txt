@@ -1,0 +1,4 @@
+biopython==1.83
+numpy==1.26.4
+polars==0.20.14
+pyfastx==2.1.0
