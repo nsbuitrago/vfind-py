@@ -3,7 +3,8 @@ from Bio import pairwise2
 import polars as pl
 import pyfastx
 from collections import defaultdict
-import time
+
+import unittest
 
 class Adapters:
     """
@@ -34,12 +35,12 @@ class AlignParams:
     """
     Parameters for pairwise alignment
 
-    :attr match_score (int): Score for match
-    :attr mismatch_score (int): Score for mismatch
-    :attr gap_open_penalty (int): Penalty for gap opening
-    :attr gap_extend_penalty (int): Penalty for gap extension
-    :attr left_align_threshold (float): Threshold for accepting left alignments
-    :attr right_align_threshold (float): Threshold for accepting right alignments 
+    :attr match_score (int): Score for match (Default: 3)
+    :attr mismatch_score (int): Score for mismatch (Default: -2)
+    :attr gap_open_penalty (int): Penalty for gap opening (Default: -5)
+    :attr gap_extend_penalty (int): Penalty for gap extension (Default: -2)
+    :attr left_align_threshold (float): Threshold for accepting left alignments (Default: 0.75)
+    :attr right_align_threshold (float): Threshold for accepting right alignments (Default: 0.75)
     """
 
     def __init__(
@@ -81,14 +82,25 @@ def get_variable_region(
 
     if start != -1 and end != -1:
         return seq[start + len(left_adapter):end]
+
     elif start == -1:
-        left_alignment = pairwise2.align.localms(seq, left_adapter, align_params.match_score, align_params.mismatch_score, align_params.gap_open_penalty, align_params.gap_extend_penalty, one_alignment_only=True)
+        left_alignment = pairwise2.align.localms(
+            seq, left_adapter, align_params.match_score, align_params.mismatch_score,
+            align_params.gap_open_penalty, align_params.gap_extend_penalty, one_alignment_only=True
+        )
+
         if left_alignment[0][2] > max_left_align_score:
             start = left_alignment[0][4]
+
     elif end == -1:
-        right_alignment = pairwise2.align.localms(seq, right_adapter, align_params.match_score, align_params.mismatch_score, align_params.gap_open_penalty, align_params.gap_extend_penalty, one_alignment_only=True)
+        right_alignment = pairwise2.align.localms(
+            seq, right_adapter, align_params.match_score, align_params.mismatch_score,
+            align_params.gap_open_penalty, align_params.gap_extend_penalty, one_alignment_only=True
+        )
+
         if right_alignment[0][2] > max_right_align_score:
             end = right_alignment[0][3]
+            start = start + len(left_adapter)
 
     if start != -1 and end != -1 and start < end:
         return seq[start:end]
@@ -97,50 +109,132 @@ def get_variable_region(
 def find_variants(
     adapters: Adapters,
     fq_path: str,
-    save_path: str = None,
     align_params: AlignParams = AlignParams(),
-    skip_translation: bool = False
+    skip_translation: bool = False,
 ) -> pl.DataFrame:
     """
     Find variants flanked by adapter sequences
 
-    :param adapters: Adapters object containing left and right flanking sequences
-    :param fq_1: Path to forward fastq file
-    :param fq_2: Path to reverse fastq file in the case of paired-end reads (Default: None)
+    :param adapters (Adapters): Adapters object containing left and right flanking sequences
+    :param fq_path (str): fastq file path
+    :param skip_translation (bool): Skip translation of variable region and return nucleotide sequences.
+    (Default: False)
 
-    :return: None
+    :return: dataframe containing variant sequences and their counts
     """
     variants = defaultdict(int)
 
-    for name, seq, qual in pyfastx.Fastq(fq_path, build_index=False):
+    for _, seq, _ in pyfastx.Fastq(fq_path, build_index=False):
         for left, right in adapters.adapters:
             max_left_align_score = align_params.left_align_threshold * len(left) * align_params.match_score
             max_right_align_score = align_params.right_align_threshold * len(right) * align_params.match_score
 
-            variant = get_variable_region(seq.upper(), left, right, max_left_align_score, max_right_align_score, align_params)
+            variant = get_variable_region(
+                seq.upper(), left, right,
+                max_left_align_score, max_right_align_score, align_params
+            )
+
             if variant:
                 if skip_translation:
                     variants[variant] += 1
                 else:
                     variants[str(Seq(variant).translate())] += 1
 
-    variants_df = pl.from_dict({"seq": list(variants.keys()), "count": list(variants.values())})
+    return pl.from_dict({"seq": list(variants.keys()), "count": list(variants.values())})
 
-    if save_path:
-        variants_df.write_csv(save_path)
 
-    return variants_df
+class TestFinder(unittest.TestCase):
+    """
+    Unit tests for alignment and vind_variants functions
+    """
+
+    def test_partial_right_match(self):
+        adapter_seq = "CCGGAGGCGGAGGTTCAG"
+        query = "GGGCCCAGCCGGCCGGATATGGCGGGCATCTGTGCACTTCCGGAGGCGGAGGTTGAG"
+
+        align_params = AlignParams()
+        max_align_score = len(adapter_seq) * align_params.match_score
+        accept_align_score = align_params.left_align_threshold * max_align_score
+
+        alignment = pairwise2.align.localms(
+            query.upper(),
+            adapter_seq,
+            align_params.match_score,
+            align_params.mismatch_score,
+            align_params.gap_open_penalty,
+            align_params.gap_extend_penalty,
+            one_alignment_only=True
+        )
+
+        assert alignment[0][2] > accept_align_score
+
+    def test_partial_left_match(self):
+        adapter_seq = "GGGCCCAGCCGGCCGGAT"
+        query = "GGGCCCAGCCGGCGGGATATGGCGGGCATCTGTGCACTTCCGGAGGCGGAGGTTCAG"
+
+        align_params = AlignParams()
+        max_align_score = len(adapter_seq) * align_params.match_score
+        accept_align_score = align_params.left_align_threshold * max_align_score
+
+        alignment = pairwise2.align.localms(
+            query.upper(),
+            adapter_seq,
+            align_params.match_score,
+            align_params.mismatch_score,
+            align_params.gap_open_penalty,
+            align_params.gap_extend_penalty,
+            one_alignment_only=True
+        )
+
+        assert alignment[0][2] > accept_align_score
+
+    def test_no_right_match(self):
+        adapter_seq = "CCGGAGGCGGAGGTTCAG"
+        query = "GGGCCCAGCCGGCCGGATATGGCGGGCATCTGTGCACTTCCGGAGGCCGTGCTACAT"
+
+        align_params = AlignParams()
+        max_align_score = len(adapter_seq) * align_params.match_score
+        accept_align_score = align_params.right_align_threshold * max_align_score
+
+        alignment = pairwise2.align.localms(
+            query.upper(),
+            adapter_seq,
+            align_params.match_score,
+            align_params.mismatch_score,
+            align_params.gap_open_penalty,
+            align_params.gap_extend_penalty,
+            one_alignment_only=True
+        )
+
+        assert alignment[0][2] < accept_align_score
+
+    def test_no_left_match(self):
+        adapter_seq = "GGGCCCAGCCGGCCGGAT"
+        query = "GGGTCTAACCGGCGGGATATGGCGGGCATCTGTGCACTTCCGGAGGCGGAGGTTCAG"
+
+        align_params = AlignParams()
+        max_align_score = len(adapter_seq) * align_params.match_score
+        accept_align_score = align_params.left_align_threshold * max_align_score
+
+        alignment = pairwise2.align.localms(
+            query.upper(),
+            adapter_seq,
+            align_params.match_score,
+            align_params.mismatch_score,
+            align_params.gap_open_penalty,
+            align_params.gap_extend_penalty,
+            one_alignment_only=True
+        )
+
+        assert alignment[0][2] < accept_align_score
+
+    def test_vfind(self):
+        adapters = Adapters("GGGCCCAGCCGGCCGGAT", "CCGGAGGCGGAGGTTCAG", id="test_adapters")
+        variants = find_variants(adapters, "test_data/toy.fq.gz")
+        ground_truth = pl.read_csv("test_data/ground_truth.csv")
+
+        assert variants.equals(ground_truth)
 
 if __name__ == "__main__":
-    adapters = Adapters("GATTATGCTGGGGCCCAGCCGGCCGGATCC", "GGAGGCGGAGGTTCAGGAGGAGGGGGATCG", id="17L")
-    fq_1 = "tests/toy_R1.fq.gz"
-    
-    start = time.perf_counter()
-    find_variants(
-        adapters,
-        fq_1,
-        save_path="new_test.csv"
-    )
-    end = time.perf_counter()
-    print(f"Time: {end - start}")
+    unittest.main()
 
