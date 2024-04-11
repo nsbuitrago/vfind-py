@@ -1,5 +1,9 @@
 # vfind-py
 
+> [!WARNING]
+> This repository has been archived in favor of an new repo for the most up to date
+> version of [vfind](https://github.com/nsbuitrago/vfind).
+
 A simple variant finder. 
 
 ## Examples
@@ -61,15 +65,13 @@ variants = find_variants(fq_path, adapters, align_params=align_params)
 ## Installation
 
 I have not packaged this, so you will need to clone the repo or just the `vfind.py`
-file into your project directory to use it. We have a new version that is significantly
-faster, but is not quite ready for release. This new version will be packaged
-when ready for ease of use.
+file into your project directory to use it.
 
 ## Contribution
 
-Contributions are more than welcome. We are currently working on a new version
-that will likely go into a new repo. If you would like to contribute to this
-version, please open an issue or PR.
+This repo will eventually be a public archive. There is a separate repo 
+for the new [vfind](https://github.com/nsbuitrago/vfind) package that uses rust
+and pyo3 for python bindings. Please feel free to contribute to the new package.
 
 ## License
 
